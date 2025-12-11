@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hacker News Comment Search</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f6f6ef;
+            color: #333;
+        }
+
+        h1 {
+            color: #ff6600;
+            margin-bottom: 20px;
+        }
+
+        .search-container {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        #url-input {
+            flex: 1;
+            padding: 10px 15px;
+            font-size: 16px;
+            border: 2px solid #ff6600;
+            border-radius: 4px;
+            outline: none;
+        }
+
+        #url-input:focus {
+            border-color: #ff4500;
+            box-shadow: 0 0 5px rgba(255, 102, 0, 0.3);
+        }
+
+        #search-btn {
+            padding: 10px 25px;
+            font-size: 16px;
+            background-color: #ff6600;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        #search-btn:hover {
+            background-color: #ff4500;
+        }
+
+        #search-btn:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 30px;
+            height: 30px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #ff6600;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background-color: #fee;
+            border: 1px solid #fcc;
+            color: #c00;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+
+        .story {
+            background-color: white;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .story-title {
+            font-size: 18px;
+            margin: 0 0 10px 0;
+        }
+
+        .story-title a {
+            color: #333;
+            text-decoration: none;
+        }
+
+        .story-title a:hover {
+            text-decoration: underline;
+        }
+
+        .story-meta {
+            font-size: 13px;
+            color: #666;
+        }
+
+        .story-meta a {
+            color: #666;
+            text-decoration: none;
+        }
+
+        .story-meta a:hover {
+            text-decoration: underline;
+        }
+
+        .comments-section {
+            margin-top: 20px;
+        }
+
+        .comments-header {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .comment {
+            background-color: white;
+            padding: 12px;
+            margin-bottom: 8px;
+            border-radius: 4px;
+            border-left: 3px solid #ff6600;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+
+        .comment.nested {
+            margin-left: 20px;
+            border-left-color: #ccc;
+        }
+
+        .comment-meta {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 8px;
+        }
+
+        .comment-meta a {
+            color: #ff6600;
+            text-decoration: none;
+        }
+
+        .comment-meta a:hover {
+            text-decoration: underline;
+        }
+
+        .comment-text {
+            font-size: 14px;
+            line-height: 1.5;
+            word-wrap: break-word;
+        }
+
+        .comment-text a {
+            color: #0066cc;
+        }
+
+        .comment-text code {
+            background-color: #f4f4f4;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+
+        .comment-text pre {
+            background-color: #f4f4f4;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+
+        .deleted-comment {
+            color: #999;
+            font-style: italic;
+        }
+
+        .no-results {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+            background-color: white;
+            border-radius: 4px;
+        }
+
+        .multiple-stories {
+            background-color: #fff9e6;
+            border: 1px solid #ffe066;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+
+        .multiple-stories h3 {
+            margin: 0 0 10px 0;
+            color: #996600;
+        }
+
+        .story-option {
+            padding: 10px;
+            margin: 5px 0;
+            background-color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            border: 1px solid #ddd;
+            transition: border-color 0.2s;
+        }
+
+        .story-option:hover {
+            border-color: #ff6600;
+        }
+
+        .story-option-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .story-option-meta {
+            font-size: 12px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <h1>Hacker News Comment Search</h1>
+
+    <div class="search-container">
+        <input type="text" id="url-input" placeholder="Enter a URL to search for on Hacker News..." />
+        <button id="search-btn">Search</button>
+    </div>
+
+    <div id="results"></div>
+
+    <script>
+        const urlInput = document.getElementById('url-input');
+        const searchBtn = document.getElementById('search-btn');
+        const resultsDiv = document.getElementById('results');
+
+        const ALGOLIA_API = 'https://hn.algolia.com/api/v1/search';
+        const HN_API = 'https://hacker-news.firebaseio.com/v0';
+
+        searchBtn.addEventListener('click', performSearch);
+        urlInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') performSearch();
+        });
+
+        async function performSearch() {
+            const url = urlInput.value.trim();
+            if (!url) {
+                showError('Please enter a URL to search for.');
+                return;
+            }
+
+            showLoading('Searching Hacker News...');
+            searchBtn.disabled = true;
+
+            try {
+                const stories = await searchByUrl(url);
+
+                if (stories.length === 0) {
+                    showNoResults(url);
+                } else if (stories.length === 1) {
+                    await loadAndDisplayComments(stories[0]);
+                } else {
+                    showStoryOptions(stories);
+                }
+            } catch (error) {
+                showError(`Error: ${error.message}`);
+            } finally {
+                searchBtn.disabled = false;
+            }
+        }
+
+        async function searchByUrl(url) {
+            // Search using Algolia's HN search API
+            const searchUrl = `${ALGOLIA_API}?query=${encodeURIComponent(url)}&restrictSearchableAttributes=url&hitsPerPage=20`;
+            const response = await fetch(searchUrl);
+
+            if (!response.ok) {
+                throw new Error('Failed to search Hacker News');
+            }
+
+            const data = await response.json();
+
+            // Filter to only include stories (not comments) that match the URL
+            return data.hits.filter(hit => {
+                if (!hit.url) return false;
+                // Check if the URLs match (normalize both)
+                const normalizedSearchUrl = normalizeUrl(url);
+                const normalizedHitUrl = normalizeUrl(hit.url);
+                return normalizedHitUrl.includes(normalizedSearchUrl) ||
+                       normalizedSearchUrl.includes(normalizedHitUrl);
+            });
+        }
+
+        function normalizeUrl(url) {
+            try {
+                // Remove protocol and www prefix for comparison
+                return url.toLowerCase()
+                    .replace(/^https?:\/\//, '')
+                    .replace(/^www\./, '')
+                    .replace(/\/$/, '');
+            } catch {
+                return url.toLowerCase();
+            }
+        }
+
+        function showLoading(message) {
+            resultsDiv.innerHTML = `
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <div>${message}</div>
+                </div>
+            `;
+        }
+
+        function showError(message) {
+            resultsDiv.innerHTML = `<div class="error">${escapeHtml(message)}</div>`;
+        }
+
+        function showNoResults(url) {
+            resultsDiv.innerHTML = `
+                <div class="no-results">
+                    <p>No Hacker News submissions found for this URL.</p>
+                    <p style="font-size: 14px; color: #999;">${escapeHtml(url)}</p>
+                </div>
+            `;
+        }
+
+        function showStoryOptions(stories) {
+            let html = `
+                <div class="multiple-stories">
+                    <h3>Multiple submissions found - click one to view comments:</h3>
+            `;
+
+            for (const story of stories) {
+                const date = new Date(story.created_at).toLocaleDateString();
+                html += `
+                    <div class="story-option" onclick="loadStoryComments('${story.objectID}')">
+                        <div class="story-option-title">${escapeHtml(story.title || 'Untitled')}</div>
+                        <div class="story-option-meta">
+                            ${story.points || 0} points | ${story.num_comments || 0} comments | by ${escapeHtml(story.author || 'unknown')} | ${date}
+                        </div>
+                    </div>
+                `;
+            }
+
+            html += '</div>';
+            resultsDiv.innerHTML = html;
+        }
+
+        // Global function for onclick handler
+        window.loadStoryComments = async function(storyId) {
+            showLoading('Loading comments...');
+            try {
+                const story = await fetchItem(storyId);
+                await displayStoryWithComments(story);
+            } catch (error) {
+                showError(`Error loading comments: ${error.message}`);
+            }
+        };
+
+        async function loadAndDisplayComments(algoliaStory) {
+            showLoading('Loading comments...');
+            try {
+                // Fetch full story data from Firebase API for complete comment tree
+                const story = await fetchItem(algoliaStory.objectID);
+                await displayStoryWithComments(story);
+            } catch (error) {
+                showError(`Error loading comments: ${error.message}`);
+            }
+        }
+
+        async function fetchItem(id) {
+            const response = await fetch(`${HN_API}/item/${id}.json`);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch item ${id}`);
+            }
+            return response.json();
+        }
+
+        async function displayStoryWithComments(story) {
+            if (!story) {
+                showError('Story not found');
+                return;
+            }
+
+            const date = story.time ? new Date(story.time * 1000).toLocaleString() : 'Unknown date';
+            const hnUrl = `https://news.ycombinator.com/item?id=${story.id}`;
+
+            let html = `
+                <div class="story">
+                    <h2 class="story-title">
+                        <a href="${escapeHtml(story.url || hnUrl)}" target="_blank">${escapeHtml(story.title || 'Untitled')}</a>
+                    </h2>
+                    <div class="story-meta">
+                        ${story.score || 0} points |
+                        by <a href="https://news.ycombinator.com/user?id=${escapeHtml(story.by || '')}" target="_blank">${escapeHtml(story.by || 'unknown')}</a> |
+                        ${date} |
+                        <a href="${hnUrl}" target="_blank">${story.descendants || 0} comments</a>
+                    </div>
+                    ${story.text ? `<div class="comment-text" style="margin-top: 10px;">${story.text}</div>` : ''}
+                </div>
+            `;
+
+            if (story.kids && story.kids.length > 0) {
+                html += `
+                    <div class="comments-section">
+                        <div class="comments-header">Comments (${story.descendants || story.kids.length})</div>
+                        <div id="comments-container">
+                            <div class="loading">
+                                <div class="spinner"></div>
+                                <div>Loading comments...</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                resultsDiv.innerHTML = html;
+
+                // Load comments
+                const commentsHtml = await loadComments(story.kids, 0);
+                document.getElementById('comments-container').innerHTML = commentsHtml;
+            } else {
+                html += `
+                    <div class="comments-section">
+                        <div class="comments-header">Comments</div>
+                        <div class="no-results">No comments yet.</div>
+                    </div>
+                `;
+                resultsDiv.innerHTML = html;
+            }
+        }
+
+        async function loadComments(commentIds, depth) {
+            if (!commentIds || commentIds.length === 0) return '';
+
+            // Limit depth to prevent too much nesting
+            const maxDepth = 10;
+            // Limit concurrent requests
+            const batchSize = 10;
+
+            let html = '';
+
+            for (let i = 0; i < commentIds.length; i += batchSize) {
+                const batch = commentIds.slice(i, i + batchSize);
+                const comments = await Promise.all(
+                    batch.map(id => fetchItem(id).catch(() => null))
+                );
+
+                for (const comment of comments) {
+                    if (!comment) continue;
+
+                    const nestClass = depth > 0 ? 'nested' : '';
+                    const marginStyle = depth > 0 ? `margin-left: ${Math.min(depth * 20, 100)}px;` : '';
+
+                    if (comment.deleted || comment.dead) {
+                        html += `
+                            <div class="comment ${nestClass}" style="${marginStyle}">
+                                <div class="deleted-comment">[deleted]</div>
+                            </div>
+                        `;
+                    } else {
+                        const date = comment.time ? new Date(comment.time * 1000).toLocaleString() : '';
+                        const hnCommentUrl = `https://news.ycombinator.com/item?id=${comment.id}`;
+
+                        html += `
+                            <div class="comment ${nestClass}" style="${marginStyle}">
+                                <div class="comment-meta">
+                                    <a href="https://news.ycombinator.com/user?id=${escapeHtml(comment.by || '')}" target="_blank">${escapeHtml(comment.by || 'unknown')}</a>
+                                    | ${date}
+                                    | <a href="${hnCommentUrl}" target="_blank">link</a>
+                                </div>
+                                <div class="comment-text">${comment.text || ''}</div>
+                            </div>
+                        `;
+
+                        // Recursively load child comments
+                        if (comment.kids && comment.kids.length > 0 && depth < maxDepth) {
+                            html += await loadComments(comment.kids, depth + 1);
+                        }
+                    }
+                }
+            }
+
+            return html;
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
