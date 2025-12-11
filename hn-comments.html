@@ -208,6 +208,58 @@
             border-radius: 4px;
         }
 
+        .comment-filter {
+            margin-bottom: 15px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        #comment-filter-input {
+            flex: 1;
+            padding: 8px 12px;
+            font-size: 14px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            outline: none;
+        }
+
+        #comment-filter-input:focus {
+            border-color: #ff6600;
+            box-shadow: 0 0 3px rgba(255, 102, 0, 0.2);
+        }
+
+        .filter-info {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .comment.hidden {
+            display: none;
+        }
+
+        .comment .fuzzy-match {
+            background-color: #fff3cd;
+            padding: 0 2px;
+            border-radius: 2px;
+        }
+
+        .fuzzy-toggle {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 13px;
+            color: #666;
+        }
+
+        .fuzzy-toggle input {
+            cursor: pointer;
+        }
+
+        .fuzzy-toggle label {
+            cursor: pointer;
+        }
+
         .multiple-stories {
             background-color: #fff9e6;
             border: 1px solid #ffe066;
@@ -264,6 +316,120 @@
         const ALGOLIA_API = 'https://hn.algolia.com/api/v1/search';
         const HN_API = 'https://hacker-news.firebaseio.com/v0';
 
+        // Fuzzy matching implementation
+        function fuzzyMatch(text, pattern) {
+            if (!pattern || !text) return { match: !pattern, score: 0, indices: [] };
+
+            text = text.toLowerCase();
+            pattern = pattern.toLowerCase();
+
+            // Exact substring match gets highest score
+            const exactIndex = text.indexOf(pattern);
+            if (exactIndex !== -1) {
+                const indices = [];
+                for (let i = 0; i < pattern.length; i++) {
+                    indices.push(exactIndex + i);
+                }
+                return { match: true, score: 1000, indices };
+            }
+
+            // Fuzzy match - characters must appear in order but not consecutively
+            let patternIdx = 0;
+            let score = 0;
+            let lastMatchIdx = -1;
+            const indices = [];
+
+            for (let i = 0; i < text.length && patternIdx < pattern.length; i++) {
+                if (text[i] === pattern[patternIdx]) {
+                    indices.push(i);
+                    // Bonus for consecutive matches
+                    if (lastMatchIdx === i - 1) {
+                        score += 10;
+                    }
+                    // Bonus for matching at word boundaries
+                    if (i === 0 || text[i - 1] === ' ' || text[i - 1] === '-' || text[i - 1] === '_') {
+                        score += 5;
+                    }
+                    score += 1;
+                    lastMatchIdx = i;
+                    patternIdx++;
+                }
+            }
+
+            const matched = patternIdx === pattern.length;
+            // Penalize matches that are spread out
+            if (matched && indices.length > 1) {
+                const spread = indices[indices.length - 1] - indices[0];
+                score -= spread * 0.1;
+            }
+
+            return { match: matched, score: matched ? score : 0, indices };
+        }
+
+        // Calculate similarity score between two strings (0-1)
+        function stringSimilarity(str1, str2) {
+            if (!str1 || !str2) return 0;
+            str1 = str1.toLowerCase();
+            str2 = str2.toLowerCase();
+
+            if (str1 === str2) return 1;
+            if (str1.includes(str2) || str2.includes(str1)) return 0.9;
+
+            // Levenshtein distance based similarity
+            const len1 = str1.length;
+            const len2 = str2.length;
+            const matrix = [];
+
+            for (let i = 0; i <= len1; i++) {
+                matrix[i] = [i];
+            }
+            for (let j = 0; j <= len2; j++) {
+                matrix[0][j] = j;
+            }
+
+            for (let i = 1; i <= len1; i++) {
+                for (let j = 1; j <= len2; j++) {
+                    const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;
+                    matrix[i][j] = Math.min(
+                        matrix[i - 1][j] + 1,
+                        matrix[i][j - 1] + 1,
+                        matrix[i - 1][j - 1] + cost
+                    );
+                }
+            }
+
+            const distance = matrix[len1][len2];
+            const maxLen = Math.max(len1, len2);
+            return maxLen === 0 ? 1 : 1 - distance / maxLen;
+        }
+
+        // Highlight matching characters in text
+        function highlightFuzzyMatch(text, pattern) {
+            if (!pattern || !text) return escapeHtml(text);
+
+            const result = fuzzyMatch(text, pattern);
+            if (!result.match || result.indices.length === 0) {
+                return escapeHtml(text);
+            }
+
+            let html = '';
+            let lastIdx = 0;
+
+            for (const idx of result.indices) {
+                html += escapeHtml(text.slice(lastIdx, idx));
+                html += `<span class="fuzzy-match">${escapeHtml(text[idx])}</span>`;
+                lastIdx = idx + 1;
+            }
+            html += escapeHtml(text.slice(lastIdx));
+
+            return html;
+        }
+
+        // Store comments data for filtering
+        let loadedComments = [];
+        let currentFilterText = '';
+        let fuzzyEnabled = true;
+
         searchBtn.addEventListener('click', performSearch);
         urlInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') performSearch();
@@ -298,7 +464,7 @@
 
         async function searchByUrl(url) {
             // Search using Algolia's HN search API
-            const searchUrl = `${ALGOLIA_API}?query=${encodeURIComponent(url)}&restrictSearchableAttributes=url&hitsPerPage=20`;
+            const searchUrl = `${ALGOLIA_API}?query=${encodeURIComponent(url)}&restrictSearchableAttributes=url&hitsPerPage=50`;
             const response = await fetch(searchUrl);
 
             if (!response.ok) {
@@ -306,16 +472,67 @@
             }
 
             const data = await response.json();
+            const normalizedSearchUrl = normalizeUrl(url);
 
-            // Filter to only include stories (not comments) that match the URL
-            return data.hits.filter(hit => {
-                if (!hit.url) return false;
-                // Check if the URLs match (normalize both)
-                const normalizedSearchUrl = normalizeUrl(url);
-                const normalizedHitUrl = normalizeUrl(hit.url);
-                return normalizedHitUrl.includes(normalizedSearchUrl) ||
-                       normalizedSearchUrl.includes(normalizedHitUrl);
-            });
+            // Score and filter stories with fuzzy matching
+            const scoredHits = data.hits
+                .filter(hit => hit.url)
+                .map(hit => {
+                    const normalizedHitUrl = normalizeUrl(hit.url);
+
+                    // Calculate match score
+                    let score = 0;
+
+                    // Exact match or containment
+                    if (normalizedHitUrl === normalizedSearchUrl) {
+                        score = 100;
+                    } else if (normalizedHitUrl.includes(normalizedSearchUrl)) {
+                        score = 90;
+                    } else if (normalizedSearchUrl.includes(normalizedHitUrl)) {
+                        score = 85;
+                    } else {
+                        // Fuzzy match on URL components
+                        const searchParts = normalizedSearchUrl.split(/[\/\.\-\_\?&=]/);
+                        const hitParts = normalizedHitUrl.split(/[\/\.\-\_\?&=]/);
+
+                        // Check domain similarity
+                        const searchDomain = normalizedSearchUrl.split('/')[0];
+                        const hitDomain = normalizedHitUrl.split('/')[0];
+                        const domainSim = stringSimilarity(searchDomain, hitDomain);
+
+                        if (domainSim > 0.7) {
+                            score += domainSim * 40;
+                        }
+
+                        // Check path similarity
+                        const searchPath = normalizedSearchUrl.split('/').slice(1).join('/');
+                        const hitPath = normalizedHitUrl.split('/').slice(1).join('/');
+                        if (searchPath && hitPath) {
+                            const pathSim = stringSimilarity(searchPath, hitPath);
+                            score += pathSim * 30;
+                        }
+
+                        // Check for matching significant parts
+                        for (const part of searchParts) {
+                            if (part.length > 3) {
+                                for (const hitPart of hitParts) {
+                                    if (hitPart.length > 3) {
+                                        const sim = stringSimilarity(part, hitPart);
+                                        if (sim > 0.7) {
+                                            score += sim * 10;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    return { hit, score };
+                })
+                .filter(item => item.score > 30) // Minimum threshold for fuzzy matches
+                .sort((a, b) => b.score - a.score);
+
+            return scoredHits.map(item => item.hit);
         }
 
         function normalizeUrl(url) {
@@ -410,6 +627,10 @@
                 return;
             }
 
+            // Reset filter state
+            loadedComments = [];
+            currentFilterText = '';
+
             const date = story.time ? new Date(story.time * 1000).toLocaleString() : 'Unknown date';
             const hnUrl = `https://news.ycombinator.com/item?id=${story.id}`;
 
@@ -432,6 +653,14 @@
                 html += `
                     <div class="comments-section">
                         <div class="comments-header">Comments (${story.descendants || story.kids.length})</div>
+                        <div class="comment-filter">
+                            <input type="text" id="comment-filter-input" placeholder="Filter comments (fuzzy search)..." />
+                            <div class="fuzzy-toggle">
+                                <input type="checkbox" id="fuzzy-toggle" checked />
+                                <label for="fuzzy-toggle">Fuzzy</label>
+                            </div>
+                            <span class="filter-info" id="filter-info"></span>
+                        </div>
                         <div id="comments-container">
                             <div class="loading">
                                 <div class="spinner"></div>
@@ -442,6 +671,21 @@
                 `;
 
                 resultsDiv.innerHTML = html;
+
+                // Set up filter event listeners
+                const filterInput = document.getElementById('comment-filter-input');
+                const fuzzyToggle = document.getElementById('fuzzy-toggle');
+
+                filterInput.addEventListener('input', debounce(() => {
+                    currentFilterText = filterInput.value;
+                    fuzzyEnabled = fuzzyToggle.checked;
+                    filterComments();
+                }, 150));
+
+                fuzzyToggle.addEventListener('change', () => {
+                    fuzzyEnabled = fuzzyToggle.checked;
+                    filterComments();
+                });
 
                 // Load comments
                 const commentsHtml = await loadComments(story.kids, 0);
@@ -455,6 +699,107 @@
                 `;
                 resultsDiv.innerHTML = html;
             }
+        }
+
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        function filterComments() {
+            const container = document.getElementById('comments-container');
+            if (!container) return;
+
+            const comments = container.querySelectorAll('.comment');
+            const filterText = currentFilterText.trim();
+            const filterInfo = document.getElementById('filter-info');
+
+            if (!filterText) {
+                // Show all comments
+                comments.forEach(comment => {
+                    comment.classList.remove('hidden');
+                    // Restore original text
+                    const textEl = comment.querySelector('.comment-text');
+                    const originalText = textEl?.getAttribute('data-original-text');
+                    if (originalText && textEl) {
+                        textEl.innerHTML = originalText;
+                    }
+                });
+                if (filterInfo) filterInfo.textContent = '';
+                return;
+            }
+
+            let matchCount = 0;
+            let totalCount = 0;
+
+            comments.forEach(comment => {
+                const textEl = comment.querySelector('.comment-text');
+                if (!textEl) return;
+
+                // Store original HTML on first filter
+                if (!textEl.getAttribute('data-original-text')) {
+                    textEl.setAttribute('data-original-text', textEl.innerHTML);
+                }
+
+                const originalHtml = textEl.getAttribute('data-original-text');
+                // Extract plain text for matching
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = originalHtml;
+                const plainText = tempDiv.textContent || tempDiv.innerText || '';
+
+                totalCount++;
+
+                let matches = false;
+                if (fuzzyEnabled) {
+                    const result = fuzzyMatch(plainText, filterText);
+                    matches = result.match && result.score > 0;
+                } else {
+                    matches = plainText.toLowerCase().includes(filterText.toLowerCase());
+                }
+
+                if (matches) {
+                    comment.classList.remove('hidden');
+                    matchCount++;
+
+                    // Highlight matches in text
+                    if (fuzzyEnabled) {
+                        const result = fuzzyMatch(plainText, filterText);
+                        if (result.indices.length > 0) {
+                            let highlightedText = '';
+                            let lastIdx = 0;
+                            for (const idx of result.indices) {
+                                highlightedText += escapeHtml(plainText.slice(lastIdx, idx));
+                                highlightedText += `<span class="fuzzy-match">${escapeHtml(plainText[idx])}</span>`;
+                                lastIdx = idx + 1;
+                            }
+                            highlightedText += escapeHtml(plainText.slice(lastIdx));
+                            textEl.innerHTML = highlightedText;
+                        }
+                    } else {
+                        // Simple highlight for non-fuzzy
+                        const regex = new RegExp(`(${escapeRegex(filterText)})`, 'gi');
+                        textEl.innerHTML = escapeHtml(plainText).replace(regex, '<span class="fuzzy-match">$1</span>');
+                    }
+                } else {
+                    comment.classList.add('hidden');
+                    textEl.innerHTML = originalHtml;
+                }
+            });
+
+            if (filterInfo) {
+                filterInfo.textContent = `Showing ${matchCount} of ${totalCount} comments`;
+            }
+        }
+
+        function escapeRegex(string) {
+            return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         }
 
         async function loadComments(commentIds, depth) {
